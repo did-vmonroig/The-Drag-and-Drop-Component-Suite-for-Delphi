@@ -1,4 +1,4 @@
-unit DragDropFile;
+ï»¿unit DragDropFile;
 // -----------------------------------------------------------------------------
 // Project:         New Drag and Drop Component Suite
 // Module:          DragDrop
@@ -8,9 +8,9 @@ unit DragDropFile;
 // Target:          Win32, Win64, Delphi 6-XE7
 // Authors:         Anders Melander, anders@melander.dk, http://melander.dk
 // Latest Version   https://github.com/landrix/The-new-Drag-and-Drop-Component-Suite-for-Delphi
-// Copyright        © 1997-1999 Angus Johnson & Anders Melander
-//                  © 2000-2010 Anders Melander
-//                  © 2011-2015 Sven Harazim
+// Copyright        Â© 1997-1999 Angus Johnson & Anders Melander
+//                  Â© 2000-2010 Anders Melander
+//                  Â© 2011-2015 Sven Harazim
 // -----------------------------------------------------------------------------
 
 interface
@@ -2278,8 +2278,10 @@ var
   MemStream: TMemoryStream;
   StatStg: TStatStg;
   Size: {$if CompilerVersion < 29}LongInt{$else}FixedUInt{$ifend};
-  Remaining: longInt;
+  Remaining: Int64;
   pChunk: PByte;
+  Descriptor: PFileDescriptorA;
+  Buffer: TBytes;
 begin
   Result := False;
 
@@ -2333,13 +2335,22 @@ begin
         else
           continue;
 
-        Stream.Stat(StatStg, STATFLAG_NONAME);
+        { No fiarse de Stat: rdpclip y Outlook sirven streams sin tamaÃ±o o con cbSize = 0 }
+        if (Succeeded(Stream.Stat(StatStg, STATFLAG_NONAME))) and (StatStg.cbSize > 0) then
+          Remaining := StatStg.cbSize
+        else
+        begin
+          Remaining := -1;
+          if (AFormatEtc.lindex > 0) then
+          begin
+            Descriptor := PFileDescriptorA(FGD.FileDescriptors[AFormatEtc.lindex-1]);
+            if (Descriptor <> nil) and ((Descriptor^.dwFlags and FD_FILESIZE) <> 0) then
+              Remaining := (Int64(Descriptor^.nFileSizeHigh) shl 32) or Descriptor^.nFileSizeLow;
+          end;
+        end;
+
         MemStream := TMemoryStream.Create;
         try
-          Remaining := StatStg.cbSize;
-          MemStream.Size := Remaining;
-          pChunk := MemStream.Memory;
-
           // Fix for Outlook attachment paste bug #1.
           // Some versions of Outlook doesn't reset the stream position after we
           // have read data from the stream, so the next time we ask Outlook for
@@ -2347,13 +2358,30 @@ begin
           // a stream where the current position is at EOS.
           Stream.Seek(0, STREAM_SEEK_SET, {$if CompilerVersion < 29}PLargeInt{$else}PUInt64{$ifend}(nil)^);
 
-          while (Remaining > 0) do
+          if (Remaining >= 0) then
           begin
-            if (Failed(Stream.Read(pChunk, Remaining, @Size))) or
-              (Size = 0) then
-              break;
-            inc(pChunk, Size);
-            dec(Remaining, Size);
+            MemStream.Size := Remaining;
+            pChunk := MemStream.Memory;
+            while (Remaining > 0) do
+            begin
+              if (Failed(Stream.Read(pChunk, Remaining, @Size))) or
+                (Size = 0) then
+                break;
+              inc(pChunk, Size);
+              dec(Remaining, Size);
+            end;
+            if (Remaining > 0) then
+              MemStream.Size := MemStream.Size - Remaining;
+          end else
+          begin
+            SetLength(Buffer, 65536);
+            repeat
+              if (Failed(Stream.Read(@Buffer[0], Length(Buffer), @Size))) or
+                (Size = 0) then
+                break;
+              MemStream.WriteBuffer(Buffer[0], Size);
+            until False;
+            MemStream.Position := 0;
           end;
           // Fix for Outlook attachment paste bug  #2.
           // We reset the stream position here just to be nice to other
